@@ -1,0 +1,163 @@
+#*
+#* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#* SPDX-License-Identifier: MIT-0
+#*
+#* Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#* software and associated documentation files (the "Software"), to deal in the Software
+#* without restriction, including without limitation the rights to use, copy, modify,
+#* merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+#* permit persons to whom the Software is furnished to do so.
+#*
+#* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+#* INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+#* PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+#* HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#* OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+#* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#*
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create three custom patch baselines for Amazon Linux, Amazon Linux 2, and Windows server.
+
+Resources:
+  WindowsPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Join [ '-', ['CustomWindowsPatchBaseline', !Ref 'AWS::AccountId'] ]
+      Description: Baseline containing all SecurityUpdates and CriticalUpdates approved for Windows instances
+      OperatingSystem: WINDOWS
+      PatchGroups:
+      - CustomWindows
+      ApprovalRules:
+        PatchRules:
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: MSRC_SEVERITY
+            - Values:
+              - SecurityUpdates
+              - CriticalUpdates
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveUntilDate: 2021-10-31
+          ComplianceLevel: CRITICAL
+  AmazonLinuxPatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Join [ '-', ['CustomAmazonLinuxPatchBaseline', !Ref 'AWS::AccountId'] ]
+      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux instances
+      OperatingSystem: AMAZON_LINUX
+      PatchGroups:
+      - CustomAmazonLinux
+      ApprovedPatches:
+        - 'kernel*'
+      ApprovedPatchesEnableNonSecurity: true
+      ApprovalRules:
+        PatchRules:
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - Security
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveUntilDate: 2021-10-31
+          ComplianceLevel: CRITICAL
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - Bugfix
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveAfterDays: 0
+          ComplianceLevel: MEDIUM
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - '*'
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveAfterDays: 7
+          ComplianceLevel: LOW
+          EnableNonSecurity: true
+  AmazonLinux2PatchBaseline:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      Name: !Join [ '-', ['CustomAmazonLinuxPatchBaseline', !Ref 'AWS::AccountId'] ]
+      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux 2 instances
+      OperatingSystem: AMAZON_LINUX_2
+      PatchGroups:
+      - CustomAmazonLinux2
+      ApprovedPatches:
+        - 'kernel*'
+      ApprovedPatchesEnableNonSecurity: true
+      ApprovalRules:
+        PatchRules:
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - Security
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveAfterDays: 0
+          ComplianceLevel: CRITICAL
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - Bugfix
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveAfterDays: 0
+          ComplianceLevel: MEDIUM
+        - PatchFilterGroup:
+            PatchFilters:
+            - Values:
+              - '*'
+              Key: SEVERITY
+            - Values:
+              - '*'
+              Key: CLASSIFICATION
+            - Values:
+              - '*'
+              Key: PRODUCT
+          ApproveAfterDays: 7
+          ComplianceLevel: LOW
+          EnableNonSecurity: true
+
+Outputs:
+  AmazonLinuxPatchBaseline:
+    Description: Patch baseline ID for the custom Amazon Linux baseline.
+    Value: !Ref AmazonLinuxPatchBaseline
+  AmazonLinux2PatchBaseline:
+    Description: Patch baseline ID for the custom Amazon Linux 2 baseline.
+    Value: !Ref AmazonLinux2PatchBaseline
+  WindowsPatchBaseline:
+    Description: Patch baseline ID for the custom Windows baseline.
+    Value: !Ref WindowsPatchBaseline

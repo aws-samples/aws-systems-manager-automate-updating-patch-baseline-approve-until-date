@@ -1,0 +1,345 @@
+#*
+#* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#* SPDX-License-Identifier: MIT-0
+#*
+#* Permission is hereby granted, free of charge, to any person obtaining a copy of this
+#* software and associated documentation files (the "Software"), to deal in the Software
+#* without restriction, including without limitation the rights to use, copy, modify,
+#* merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+#* permit persons to whom the Software is furnished to do so.
+#*
+#* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+#* INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+#* PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+#* HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#* OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+#* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#*
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to automate the process of updating patch baseline rules.
+Parameters:
+  PatchBaselinesToUpdate:
+    Type: CommaDelimitedList
+    Description: The patch baseline IDs to update.
+  IAMRoleChangeRequestApprovers:
+    Type: String
+    Description: The name of the IAM role to approve the change request.
+  ScheduleExpression:
+    Type: String
+    Description: The cron expression for the EventBridge rule. The default cron expression creates a change request on the first day of the month at 08:00 UTC.
+    Default: 'cron(0 8 1 * ? *)'
+
+Resources:
+  #-------------------------------------------------
+  # Automation IAM policy and service role
+  #-------------------------------------------------
+  automationIAMServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub blog-automation-${AWS::AccountId}-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ssm.amazonaws.com
+          Action: sts:AssumeRole
+      Description: Automation service role to update Patch Baselines
+
+  automationIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+            - ssm:GetPatchBaseline
+            - ssm:UpdatePatchBaseline
+            Resource:
+            - '*'
+          - Effect: Allow
+            Action:
+            - ssm:StartChangeRequestExecution
+            Resource:
+            - !Sub arn:${AWS::Partition}:ssm:*:*:automation-definition/${changeRequestUpdatePatchApprovalDate}:$DEFAULT
+          - Effect: Allow
+            Action:
+            - iam:PassRole
+            Resource:
+            - !GetAtt automationIAMServiceRole.Arn
+            Condition:
+              StringLikeIfExists:
+                iam:PassedToService: ssm.amazonaws.com
+      PolicyName: updatePatchBaselines
+      Roles:
+        - !Ref automationIAMServiceRole
+
+  #-------------------------------------------------
+  # Automation Change Template
+  #-------------------------------------------------
+  changeRequestUpdatePatchApprovalDate:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentFormat: YAML
+      DocumentType: Automation.ChangeTemplate
+      Content:
+        schemaVersion: '0.3'
+        emergencyChange: false
+        autoApprovable: true
+        mainSteps:
+        - name: ApproveAction1
+          action: aws:approve
+          timeoutSeconds: 604800
+          inputs:
+            Message: Please approve this change request
+            EnhancedApprovals:
+              Approvers:
+              - approver: !Ref IAMRoleChangeRequestApprovers
+                type: IamRole
+                minRequiredApprovals: 1
+        description: Change Manager template to update the ApproveUntilDate for the specified patch baselines.
+        executableRunBooks:
+        - name: !Ref updatePatchBaselineApprovalDateRunbook
+          version: "$DEFAULT"
+        templateInformation: |-
+          #### What is the purpose of this change?
+
+          #### What will be required to make this change?
+
+          #### Are there any manual steps that need to be run as part of this change?
+
+          #### What is the expected end state of the system after this change?
+
+          #### What assumptions, if any, are being made about the state of the system at the time of this change?
+
+          #### What could happen if everything goes wrong this change and how is the risk mitigated?
+
+          #### What is your rollback plan?
+
+  #-------------------------------------------------
+  # Automation runbook to create change request
+  #-------------------------------------------------
+  createChangeRequestUpdatePatchApprovalDate:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentFormat: YAML
+      DocumentType: Automation
+      Content:
+        description: '*This automation will create a AWS Change Manager request.*'
+        schemaVersion: '0.3'
+        assumeRole: '{{ AutomationAssumeRole }}'
+        parameters:
+          AutomationAssumeRole:
+            default: !GetAtt automationIAMServiceRole.Arn
+            type: String
+            description: (Required) The Amazon Resource Name (ARN) of the role that allows Automation to perform the actions on your behalf.
+          baselineIds:
+            type: StringList
+            description: (Required) The IDs of the patch baselines to update.
+            default: !Ref PatchBaselinesToUpdate
+          changeRequestTemplateName:
+            type: String
+            description: (Required) The name of the change request template.
+            default: !Ref changeRequestUpdatePatchApprovalDate
+          runbookName:
+            type: String
+            description: (Required) The name of the Automation runbook to update the specified patch baselines.
+            default: !Ref updatePatchBaselineApprovalDateRunbook
+        mainSteps:
+          - name: createChangeRequest
+            description: Start a change to update the ApproveUntil date for patch baseline approval rules.
+            action: 'aws:executeScript'
+            inputs:
+              Runtime: python3.8
+              Handler: script_handler
+              InputPayload:
+                automationAssumeRole: '{{AutomationAssumeRole}}'
+                baselineIds: '{{baselineIds}}'
+                changeRequestTemplateName: '{{changeRequestTemplateName}}'
+                runbookName: '{{runbookName}}'
+              Script: |-
+                #Import libraries
+                import boto3
+
+                ssm = boto3.client('ssm')
+
+                def script_handler(event, context):
+
+                    baselineIds = event["baselineIds"]
+                    baselines_comma_separated = ",".join(baselineIds)
+
+                    changeRequestTemplateName = event['changeRequestTemplateName']
+
+                    roleArn = event['automationAssumeRole']
+                    runbookName = event['runbookName']
+
+                    response = ssm.start_change_request_execution(
+                        DocumentName=changeRequestTemplateName,
+                        Runbooks=[
+                            {
+                                'DocumentName': runbookName,
+                                'Parameters': {
+                                    'AutomationAssumeRole': [roleArn],
+                                    'baselineIds': [baselines_comma_separated]
+                                }
+                            }
+                        ]
+                    )
+
+                    print(response['AutomationExecutionId'])
+
+  updatePatchBaselineApprovalDateRunbook:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentFormat: YAML
+      DocumentType: Automation
+      Content:
+        description: An example of an Automation runbook that patches groups of Amazon EC2 instances in stages.
+        schemaVersion: '0.3'
+        assumeRole: '{{AutomationAssumeRole}}'
+        parameters:
+          AutomationAssumeRole:
+            type: String
+            description: (Required) The Amazon Resource Name (ARN) of the IAM role that allows Automation to perform the actions on your behalf. If no role is specified, Systems Manager Automation uses your IAM permissions to operate this runbook.
+            default: !GetAtt automationIAMServiceRole.Arn
+          baselineIds:
+            type: StringList
+            description: (Required) The patch baseline IDs to update.
+        mainSteps:
+          - name: updatePatchBaselines
+            action: 'aws:executeScript'
+            timeoutSeconds: 120
+            onFailure: Abort
+            inputs:
+              Runtime: python3.8
+              Handler: updatePatchBaselines
+              InputPayload:
+                baselineIds: '{{baselineIds}}'
+              Script: |-
+                #Import libraries
+                import boto3
+                from datetime import datetime
+
+                #Get the first day of the current month
+                firstOfCurrentMonth = datetime.today().replace(day=1).strftime('%Y-%m-%d')
+
+                ssm = boto3.client('ssm')
+
+                def updatePatchBaselines(event, context):
+                    #Ingest list of baselines to update
+                    baselines = event['baselineIds']
+
+                    baselinesList = baselines[0].split(",")
+
+                    for baseline in baselinesList:
+
+                        #Get current baseline details
+                        getPatchBaselineResponse = ssm.get_patch_baseline(
+                                BaselineId=baseline
+                            )
+
+                        #Create lists to compare later on
+                        updatedPatchRules = []
+                        combinedPatchRules = []
+
+                        for rule in getPatchBaselineResponse['ApprovalRules']['PatchRules']:
+
+                            #Check if rule includes ApproveUntilDate
+                            if "ApproveUntilDate" in rule:
+
+                                #Check if ApproveUntilDate is not set as the current month and update
+                                if rule['ApproveUntilDate'] != firstOfCurrentMonth:
+
+                                    #Update ApproveUntilDate to current first day of the month
+                                    rule['ApproveUntilDate'] = firstOfCurrentMonth
+
+                                    #Add updated rule to PatchRules
+                                    updatedPatchRules.append(rule)
+                                    combinedPatchRules.append(rule)
+
+                                #ApproveUntilDate is already set to current month, do nothing
+                                else:
+                                    #No update needed, add existing rule to PatchRules
+                                    combinedPatchRules.append(rule)
+                            else:
+                                #Rule does not include ApproveUntilDate, add to combined rule set
+                                combinedPatchRules.append(rule)
+
+                        #If rules were updated, update the patch baseline
+                        if updatedPatchRules:
+
+                            getPatchBaselineResponse['ApprovalRules']['PatchRules'] = combinedPatchRules
+
+                            print('Updating rules for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+
+                            updatePatchBaselineResponse = ssm.update_patch_baseline(
+                                    BaselineId = getPatchBaselineResponse['BaselineId'],
+                                    Name= getPatchBaselineResponse['Name'],
+                                    GlobalFilters= getPatchBaselineResponse['GlobalFilters'],
+                                    ApprovalRules= getPatchBaselineResponse['ApprovalRules'],
+                                    ApprovedPatches= getPatchBaselineResponse['ApprovedPatches'],
+                                    ApprovedPatchesComplianceLevel= getPatchBaselineResponse['ApprovedPatchesComplianceLevel'],
+                                    ApprovedPatchesEnableNonSecurity= getPatchBaselineResponse['ApprovedPatchesEnableNonSecurity'],
+                                    RejectedPatches= getPatchBaselineResponse['RejectedPatches'],
+                                    RejectedPatchesAction= getPatchBaselineResponse['RejectedPatchesAction'],
+                                    Description= getPatchBaselineResponse['Description'] if 'Description' in getPatchBaselineResponse else '-',
+                                    Sources= getPatchBaselineResponse['Sources'],
+                                    Replace= True
+                                )
+                        else:
+                            print('No update needed for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+
+  #-------------------------------------------------
+  # EventBridge IAM Service role, policy, and rule
+  #-------------------------------------------------
+  eventBridgeIAMServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub blog-eventbridge-${AWS::AccountId}-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - events.amazonaws.com
+          Action: sts:AssumeRole
+      Description: EventBridge service role to create a change request for updating Patch Baselines
+
+  eventBridgeIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: ssm:StartAutomationExecution
+          Effect: Allow
+          Resource:
+          - !Sub arn:${AWS::Partition}:ssm:*:*:automation-definition/${createChangeRequestUpdatePatchApprovalDate}:$DEFAULT
+        - Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource:
+          - !GetAtt automationIAMServiceRole.Arn
+          Condition:
+            StringLikeIfExists:
+              iam:PassedToService: ssm.amazonaws.com
+      PolicyName: updatePatchBaselines
+      Roles:
+        - !Ref eventBridgeIAMServiceRole
+
+  eventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      Name: updatePatchBaselinesRule
+      RoleArn: !GetAtt eventBridgeIAMServiceRole.Arn
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:automation-definition/${createChangeRequestUpdatePatchApprovalDate}:$DEFAULT
+          Id: !Ref "AWS::StackName"
+          RoleArn: !GetAtt eventBridgeIAMServiceRole.Arn
