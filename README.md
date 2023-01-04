@@ -1,11 +1,15 @@
-## My Project
+# My Project
 
-TODO: Fill this README out!
+This repo hosts CloudFormation templates related to the AWS Management & Governance blog post:
 
-Be sure to:
+**Link-TBD**
 
-* Change the title in this README
-* Edit your repository description on GitHub
+For details on how to use the corresponding CloudFormation templates, refer to the blog post.
+
+CloudFormation Templates:
+
+* [customPatchBaselines.yml](/cfn-templates/customPatchBaselines.yml)
+* [updatePatchBaselines.yml](/cfn-templates/updatePatchBaselines.yml)
 
 ## Security
 
@@ -14,4 +18,3 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 ## License
 
 This library is licensed under the MIT-0 License. See the LICENSE file.
-
