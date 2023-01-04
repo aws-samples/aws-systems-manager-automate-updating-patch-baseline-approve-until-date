@@ -1,4 +1,4 @@
-# My Project
+# Automate updating approval cut off dates for Patch Manager Patch Baselines
 
 This repo hosts CloudFormation templates related to the AWS Management & Governance blog post:
 
