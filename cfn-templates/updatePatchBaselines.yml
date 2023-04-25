@@ -10,18 +10,19 @@
 #*
 #* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 #* INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-#* PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+#* PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT1
 #* HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 #* OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 #* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #*
-
+---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS CloudFormation template to automate the process of updating patch baseline rules.
+Description: AWS CloudFormation template to create Systems Manager Change Request Template, Systems Manager Automation runbook, AWS EventBridge rule.
 Parameters:
   PatchBaselinesToUpdate:
     Type: CommaDelimitedList
     Description: The patch baseline IDs to update.
+    AllowedPattern: ^[a-zA-Z0-9_\-:/]{20,128}$
   IAMRoleChangeRequestApprovers:
     Type: String
     Description: The name of the IAM role to approve the change request.
@@ -29,6 +30,12 @@ Parameters:
     Type: String
     Description: The cron expression for the EventBridge rule. The default cron expression creates a change request on the first day of the month at 08:00 UTC.
     Default: 'cron(0 8 1 * ? *)'
+  PatchApprovalCutoffDay:
+    Type: String
+    Description: (Optional) Enter the day of the month which will be set as the auto-approval cutoff date for the Patch Baselines. For example, if you want the ApproveUntilDate to be set as 7th of the month, enter 7. Default is 1st of the month.
+    Default: '1'
+    MinLength: 1
+    MaxLength: 2
 
 Resources:
   #-------------------------------------------------
@@ -37,7 +44,6 @@ Resources:
   automationIAMServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub blog-automation-${AWS::AccountId}-${AWS::Region}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -57,9 +63,13 @@ Resources:
           - Effect: Allow
             Action:
             - ssm:GetPatchBaseline
+            Resource:
+            - !Sub arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:patchbaseline/*
+          - Effect: Allow
+            Action:
             - ssm:UpdatePatchBaseline
             Resource:
-            - '*'
+            - !Sub arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:patchbaseline/*
           - Effect: Allow
             Action:
             - ssm:StartChangeRequestExecution
@@ -128,26 +138,33 @@ Resources:
       DocumentFormat: YAML
       DocumentType: Automation
       Content:
-        description: '*This automation will create a AWS Change Manager request.*'
+        description: '*This automation will create a AWS Change Manager request to update the Patch Baselines with the ApproveUntilDate.*'
         schemaVersion: '0.3'
         assumeRole: '{{ AutomationAssumeRole }}'
         parameters:
           AutomationAssumeRole:
             default: !GetAtt automationIAMServiceRole.Arn
-            type: String
+            type: 'AWS::IAM::Role::Arn'
             description: (Required) The Amazon Resource Name (ARN) of the role that allows Automation to perform the actions on your behalf.
           baselineIds:
             type: StringList
             description: (Required) The IDs of the patch baselines to update.
             default: !Ref PatchBaselinesToUpdate
+          ApproveDayOfTheMonth:
+            type: String
+            description: (Optional) Enter the day of the month which will be set as the ApproveUntilDate for the month. For example, if you want the ApproveUntilDate to be set as 7th of the month, enter 7.
+            default: !Ref PatchApprovalCutoffDay
+            maxChars: 2
           changeRequestTemplateName:
             type: String
             description: (Required) The name of the change request template.
             default: !Ref changeRequestUpdatePatchApprovalDate
+            allowedPattern: ^[a-zA-Z0-9_\-.]{3,128}$
           runbookName:
             type: String
             description: (Required) The name of the Automation runbook to update the specified patch baselines.
             default: !Ref updatePatchBaselineApprovalDateRunbook
+            allowedPattern: ^[a-zA-Z0-9_\-.]{3,128}$
         mainSteps:
           - name: createChangeRequest
             description: Start a change to update the ApproveUntil date for patch baseline approval rules.
@@ -158,6 +175,7 @@ Resources:
               InputPayload:
                 automationAssumeRole: '{{AutomationAssumeRole}}'
                 baselineIds: '{{baselineIds}}'
+                ApproveDayOfTheMonth : '{{ApproveDayOfTheMonth}}'
                 changeRequestTemplateName: '{{changeRequestTemplateName}}'
                 runbookName: '{{runbookName}}'
               Script: |-
@@ -175,6 +193,7 @@ Resources:
 
                     roleArn = event['automationAssumeRole']
                     runbookName = event['runbookName']
+                    Approvalday = event['ApproveDayOfTheMonth']
 
                     response = ssm.start_change_request_execution(
                         DocumentName=changeRequestTemplateName,
@@ -183,7 +202,8 @@ Resources:
                                 'DocumentName': runbookName,
                                 'Parameters': {
                                     'AutomationAssumeRole': [roleArn],
-                                    'baselineIds': [baselines_comma_separated]
+                                    'baselineIds': [baselines_comma_separated],
+                                    'PatchApprovalCutoffDay' : [Approvalday]
                                 }
                             }
                         ]
@@ -197,100 +217,107 @@ Resources:
       DocumentFormat: YAML
       DocumentType: Automation
       Content:
-        description: An example of an Automation runbook that patches groups of Amazon EC2 instances in stages.
+        description: Automation runbook to update Patch Baseline Approval date.
         schemaVersion: '0.3'
         assumeRole: '{{AutomationAssumeRole}}'
+        outputs:
+        - updatePatchBaselines.output
         parameters:
           AutomationAssumeRole:
-            type: String
+            type: 'AWS::IAM::Role::Arn'
             description: (Required) The Amazon Resource Name (ARN) of the IAM role that allows Automation to perform the actions on your behalf. If no role is specified, Systems Manager Automation uses your IAM permissions to operate this runbook.
             default: !GetAtt automationIAMServiceRole.Arn
           baselineIds:
             type: StringList
             description: (Required) The patch baseline IDs to update.
+          PatchApprovalCutoffDay:
+            type: String
+            description: (Optional) Enter the day of the month which will be set as the ApproveUntilDate for the Patch Baselines. For example, if you want the ApproveUntilDate to be set as 7th of the month, enter 7. Default is 1st of the month.
+            default: '1'
+            maxChars: 2
         mainSteps:
           - name: updatePatchBaselines
             action: 'aws:executeScript'
             timeoutSeconds: 120
             onFailure: Abort
+            outputs:
+            - Name: output
+              Selector: "$.Payload.output"
+              Type: StringMap
             inputs:
               Runtime: python3.8
               Handler: updatePatchBaselines
               InputPayload:
                 baselineIds: '{{baselineIds}}'
+                ApprovalDay: '{{PatchApprovalCutoffDay}}'
               Script: |-
-                #Import libraries
                 import boto3
+                from botocore.exceptions import ClientError,ParamValidationError
                 from datetime import datetime
 
-                #Get the first day of the current month
-                firstOfCurrentMonth = datetime.today().replace(day=1).strftime('%Y-%m-%d')
-
                 ssm = boto3.client('ssm')
+                Output = {}
 
                 def updatePatchBaselines(event, context):
-                    #Ingest list of baselines to update
-                    baselines = event['baselineIds']
 
+                    baselines = event['baselineIds']
                     baselinesList = baselines[0].split(",")
+                    DayApproveUntil = int(event['ApprovalDay'])
+                    RequiredDayofCurrentMonth = datetime.today().replace(day=DayApproveUntil).strftime('%Y-%m-%d')
 
                     for baseline in baselinesList:
+                        try:
+                            getPatchBaselineResponse = ssm.get_patch_baseline(BaselineId=baseline)
+                            updatedPatchRules = []
+                            combinedPatchRules = []
+                            for rule in getPatchBaselineResponse['ApprovalRules']['PatchRules']:
 
-                        #Get current baseline details
-                        getPatchBaselineResponse = ssm.get_patch_baseline(
-                                BaselineId=baseline
-                            )
+                                #Check if rule includes ApproveUntilDate
+                                if "ApproveUntilDate" in rule:
+                                    #Check if ApproveUntilDate is not set as the current month and update
+                                    if rule['ApproveUntilDate'] != RequiredDayofCurrentMonth:
+                                        #Update ApproveUntilDate to current first day of the month
+                                        rule['ApproveUntilDate'] = RequiredDayofCurrentMonth
 
-                        #Create lists to compare later on
-                        updatedPatchRules = []
-                        combinedPatchRules = []
-
-                        for rule in getPatchBaselineResponse['ApprovalRules']['PatchRules']:
-
-                            #Check if rule includes ApproveUntilDate
-                            if "ApproveUntilDate" in rule:
-
-                                #Check if ApproveUntilDate is not set as the current month and update
-                                if rule['ApproveUntilDate'] != firstOfCurrentMonth:
-
-                                    #Update ApproveUntilDate to current first day of the month
-                                    rule['ApproveUntilDate'] = firstOfCurrentMonth
-
-                                    #Add updated rule to PatchRules
-                                    updatedPatchRules.append(rule)
-                                    combinedPatchRules.append(rule)
-
-                                #ApproveUntilDate is already set to current month, do nothing
+                                        #Add updated rule to PatchRules
+                                        updatedPatchRules.append(rule)
+                                        combinedPatchRules.append(rule)
+                                    else:
+                                        #ApproveUntilDate is already set to current month, do nothing
+                                        #No update needed, add existing rule to PatchRules
+                                        combinedPatchRules.append(rule)
                                 else:
-                                    #No update needed, add existing rule to PatchRules
+                                    #Rule does not include ApproveUntilDate, add to combined rule set
                                     combinedPatchRules.append(rule)
+
+                            #If rules were updated, update the patch baseline
+                            if updatedPatchRules:
+                                getPatchBaselineResponse['ApprovalRules']['PatchRules'] = combinedPatchRules
+                                #print('Updating rules for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+                                updatePatchBaselineResponse = ssm.update_patch_baseline(
+                                        BaselineId = getPatchBaselineResponse['BaselineId'],
+                                        Name= getPatchBaselineResponse['Name'],
+                                        GlobalFilters= getPatchBaselineResponse['GlobalFilters'],
+                                        ApprovalRules= getPatchBaselineResponse['ApprovalRules'],
+                                        ApprovedPatches= getPatchBaselineResponse['ApprovedPatches'],
+                                        ApprovedPatchesComplianceLevel= getPatchBaselineResponse['ApprovedPatchesComplianceLevel'],
+                                        ApprovedPatchesEnableNonSecurity= getPatchBaselineResponse['ApprovedPatchesEnableNonSecurity'],
+                                        RejectedPatches= getPatchBaselineResponse['RejectedPatches'],
+                                        RejectedPatchesAction= getPatchBaselineResponse['RejectedPatchesAction'],
+                                        Description= getPatchBaselineResponse['Description'] if 'Description' in getPatchBaselineResponse else '-',
+                                        Sources= getPatchBaselineResponse['Sources'],
+                                        Replace= True
+                                    )
+                                print('Updated rules for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+                                Output.update({baseline:' \u2705 [SUCCESS] Updated rules for '+getPatchBaselineResponse['Name']+': '+getPatchBaselineResponse['BaselineId']})
                             else:
-                                #Rule does not include ApproveUntilDate, add to combined rule set
-                                combinedPatchRules.append(rule)
+                                print('No update needed for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+                                Output.update({baseline:' \u2757 [SKIPPED] No update needed for '+getPatchBaselineResponse['Name']+': '+getPatchBaselineResponse['BaselineId']})
+                        except ClientError as e:
+                            print('Error Message: {}'.format(e.response['Error']['Message']))
+                            Output.update({baseline:' \u274C [FAILED] {}'.format(e.response['Error']['Message'])})
 
-                        #If rules were updated, update the patch baseline
-                        if updatedPatchRules:
-
-                            getPatchBaselineResponse['ApprovalRules']['PatchRules'] = combinedPatchRules
-
-                            print('Updating rules for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
-
-                            updatePatchBaselineResponse = ssm.update_patch_baseline(
-                                    BaselineId = getPatchBaselineResponse['BaselineId'],
-                                    Name= getPatchBaselineResponse['Name'],
-                                    GlobalFilters= getPatchBaselineResponse['GlobalFilters'],
-                                    ApprovalRules= getPatchBaselineResponse['ApprovalRules'],
-                                    ApprovedPatches= getPatchBaselineResponse['ApprovedPatches'],
-                                    ApprovedPatchesComplianceLevel= getPatchBaselineResponse['ApprovedPatchesComplianceLevel'],
-                                    ApprovedPatchesEnableNonSecurity= getPatchBaselineResponse['ApprovedPatchesEnableNonSecurity'],
-                                    RejectedPatches= getPatchBaselineResponse['RejectedPatches'],
-                                    RejectedPatchesAction= getPatchBaselineResponse['RejectedPatchesAction'],
-                                    Description= getPatchBaselineResponse['Description'] if 'Description' in getPatchBaselineResponse else '-',
-                                    Sources= getPatchBaselineResponse['Sources'],
-                                    Replace= True
-                                )
-                        else:
-                            print('No update needed for '+getPatchBaselineResponse['Name']+' '+getPatchBaselineResponse['BaselineId'])
+                    return {'output': Output}
 
   #-------------------------------------------------
   # EventBridge IAM Service role, policy, and rule
@@ -298,7 +325,6 @@ Resources:
   eventBridgeIAMServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub blog-eventbridge-${AWS::AccountId}-${AWS::Region}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

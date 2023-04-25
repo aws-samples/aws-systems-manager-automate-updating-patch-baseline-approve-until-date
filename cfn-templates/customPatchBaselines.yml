@@ -15,7 +15,7 @@
 #* OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 #* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #*
-
+---
 AWSTemplateFormatVersion: '2010-09-09'
 Description: AWS CloudFormation template to create three custom patch baselines for Amazon Linux, Amazon Linux 2, and Windows server.
 
@@ -24,7 +24,7 @@ Resources:
     Type: AWS::SSM::PatchBaseline
     Properties:
       Name: !Join [ '-', ['CustomWindowsPatchBaseline', !Ref 'AWS::AccountId'] ]
-      Description: Baseline containing all SecurityUpdates and CriticalUpdates approved for Windows instances
+      Description: Baseline containing all SecurityUpdates and CriticalUpdates approved for Windows instances.
       OperatingSystem: WINDOWS
       PatchGroups:
       - CustomWindows
@@ -42,13 +42,13 @@ Resources:
             - Values:
               - '*'
               Key: PRODUCT
-          ApproveUntilDate: 2021-10-31
+          ApproveUntilDate: 2023-02-01
           ComplianceLevel: CRITICAL
   AmazonLinuxPatchBaseline:
     Type: AWS::SSM::PatchBaseline
     Properties:
       Name: !Join [ '-', ['CustomAmazonLinuxPatchBaseline', !Ref 'AWS::AccountId'] ]
-      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux instances
+      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux instances.
       OperatingSystem: AMAZON_LINUX
       PatchGroups:
       - CustomAmazonLinux
@@ -68,7 +68,7 @@ Resources:
             - Values:
               - '*'
               Key: PRODUCT
-          ApproveUntilDate: 2021-10-31
+          ApproveUntilDate: 2023-02-01
           ComplianceLevel: CRITICAL
         - PatchFilterGroup:
             PatchFilters:
@@ -101,7 +101,7 @@ Resources:
     Type: AWS::SSM::PatchBaseline
     Properties:
       Name: !Join [ '-', ['CustomAmazonLinuxPatchBaseline', !Ref 'AWS::AccountId'] ]
-      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux 2 instances
+      Description: Baseline containing all Security and Bugfix updates approved for Amazon Linux 2 instances.
       OperatingSystem: AMAZON_LINUX_2
       PatchGroups:
       - CustomAmazonLinux2
@@ -121,7 +121,7 @@ Resources:
             - Values:
               - '*'
               Key: PRODUCT
-          ApproveAfterDays: 0
+          ApproveUntilDate: 2023-02-01
           ComplianceLevel: CRITICAL
         - PatchFilterGroup:
             PatchFilters:
@@ -134,7 +134,7 @@ Resources:
             - Values:
               - '*'
               Key: PRODUCT
-          ApproveAfterDays: 0
+          ApproveUntilDate: 2023-02-01
           ComplianceLevel: MEDIUM
         - PatchFilterGroup:
             PatchFilters:
